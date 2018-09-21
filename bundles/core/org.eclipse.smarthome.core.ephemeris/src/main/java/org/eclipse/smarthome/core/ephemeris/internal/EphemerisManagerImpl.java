@@ -29,7 +29,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
-import org.eclipse.jdt.annotation.Nullable;
+import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.smarthome.config.core.ConfigOptionProvider;
 import org.eclipse.smarthome.config.core.ConfigurableService;
 import org.eclipse.smarthome.config.core.ParameterOption;
@@ -73,10 +73,12 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
     private final Map<String, Set<DayOfWeek>> daysets = new HashMap<>();
     private final Map<Object, HolidayManager> holidayManagers = new HashMap<>();
 
-    private @Nullable String country;
+    @NonNullByDefault({})
+    private String country;
     private final List<String> countryParameters = new ArrayList<>();
 
-    private @Nullable LocaleProvider localeProvider;
+    @NonNullByDefault({})
+    private LocaleProvider localeProvider;
 
     @Activate
     protected void activate(Map<String, Object> config) {
@@ -85,23 +87,22 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
 
     @Modified
     protected void modified(Map<String, Object> config) {
-
-        config.keySet().stream().filter(k -> k.startsWith(CONFIG_DAYSET_PREFIX)).forEach(k -> {
-            String[] setDefinition = config.get(k).toString().split(",");
-            String[] setNameParts = k.split("-");
+        config.entrySet().stream().filter(e -> e.getKey().startsWith(CONFIG_DAYSET_PREFIX)).forEach(e -> {
+            String[] setDefinition = e.getValue().toString().toUpperCase().split(",");
+            String[] setNameParts = e.getKey().split("-");
             if (setDefinition.length > 0 && setNameParts.length > 1) {
                 Set<DayOfWeek> dayset = new HashSet<>();
                 Stream.of(setDefinition).forEach(day -> {
-                    dayset.add(DayOfWeek.valueOf(day.toUpperCase()));
+                    dayset.add(DayOfWeek.valueOf(day));
                 });
                 daysets.put(setNameParts[1], dayset);
             } else {
-                logger.warn("Erroneus dayset definition {} : {}", k, config.get(k));
+                logger.warn("Erroneous dayset definition {} : {}", e.getKey(), e.getValue());
             }
         });
 
         country = getValueAsString(config, CONFIG_COUNTRY);
-        if (country == null && localeProvider != null) {
+        if (country == null) {
             country = localeProvider.getLocale().getCountry();
             logger.debug("Using system default country '{}' ", country);
         }
@@ -131,18 +132,14 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
     @Override
     public Collection<ParameterOption> getParameterOptions(URI uri, String param, Locale locale) {
         if (CONFIG_URI.equals(uri.toString())) {
-            if (localeProvider != null) {
-                Locale nullSafeLocale = locale == null ? localeProvider.getLocale() : locale;
-                List<ParameterOption> options = new ArrayList<>();
-                for (DayOfWeek day : DayOfWeek.values()) {
-                    ParameterOption option = new ParameterOption(day.name(),
-                            day.getDisplayName(TextStyle.FULL, nullSafeLocale));
-                    options.add(option);
-                }
-                return options;
-            } else {
-                logger.warn("No locale provider available, could not define week days list");
+            Locale nullSafeLocale = locale == null ? localeProvider.getLocale() : locale;
+            List<ParameterOption> options = new ArrayList<>();
+            for (DayOfWeek day : DayOfWeek.values()) {
+                ParameterOption option = new ParameterOption(day.name(),
+                        day.getDisplayName(TextStyle.FULL, nullSafeLocale));
+                options.add(option);
             }
+            return options;
         }
         return null;
     }
@@ -154,12 +151,10 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
 
     private HolidayManager getHolidayManager(Object managerKey) {
         if (!holidayManagers.containsKey(managerKey)) {
-            ManagerParameter parameters;
-            if (managerKey.getClass() == String.class) {
-                parameters = ManagerParameters.create((String) managerKey);
-            } else {
-                parameters = ManagerParameters.create((URL) managerKey);
-            }
+            ManagerParameter parameters = managerKey.getClass() == String.class
+                    ? ManagerParameters.create((String) managerKey)
+                    : ManagerParameters.create((URL) managerKey);
+
             HolidayManager holidayManager = HolidayManager.getInstance(parameters);
             holidayManagers.put(managerKey, holidayManager);
         }
@@ -197,45 +192,32 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
     }
 
     @Override
-    public @Nullable String getBankHolidayName(int offset) {
+    public String getBankHolidayName(int offset) {
         return getBankHolidayName(ZonedDateTime.now().plusDays(offset));
     }
 
-    private @Nullable String getBankHolidayName(ZonedDateTime date) {
+    private String getBankHolidayName(ZonedDateTime date) {
         Holiday holiday = getHoliday(date);
-        if (holiday != null && localeProvider != null) {
-            return holiday.getDescription(localeProvider.getLocale());
-        }
-        return null;
+        return (holiday != null) ? holiday.getDescription(localeProvider.getLocale()) : null;
     }
 
-    private @Nullable Holiday getHoliday(ZonedDateTime date) {
-        if (country != null) {
-            HolidayManager manager = getHolidayManager(country);
-            LocalDate localDate = date.toLocalDate();
+    private Holiday getHoliday(ZonedDateTime date) {
+        HolidayManager manager = getHolidayManager(country);
+        LocalDate localDate = date.toLocalDate();
 
-            Set<Holiday> holidays = manager.getHolidays(localDate, localDate, countryParameters.toArray(new String[0]));
-            if (!holidays.isEmpty()) {
-                return holidays.iterator().next();
-            }
-        } else {
-            logger.warn("No country defined by system configuration, neither by service configuration");
-        }
-        return null;
+        Set<Holiday> holidays = manager.getHolidays(localDate, localDate, countryParameters.toArray(new String[0]));
+
+        return !holidays.isEmpty() ? holidays.iterator().next() : null;
     }
 
-    private @Nullable String getHolidayUserFile(ZonedDateTime date, String filename) throws MalformedURLException {
+    private String getHolidayUserFile(ZonedDateTime date, String filename) throws MalformedURLException {
         URL url = new URL("file:" + filename);
         Set<Holiday> days = getHolidayManager(url).getHolidays(date.toLocalDate(), date.toLocalDate());
-        if (!days.isEmpty()) {
-            return days.iterator().next().getPropertiesKey();
-        } else {
-            return null;
-        }
+        return !days.isEmpty() ? days.iterator().next().getPropertiesKey() : null;
     }
 
     @Override
-    public @Nullable String getHolidayUserFile(int offset, String filename) throws MalformedURLException {
+    public String getHolidayUserFile(int offset, String filename) throws MalformedURLException {
         return getHolidayUserFile(ZonedDateTime.now().plusDays(offset), filename);
     }
 

@@ -14,16 +14,12 @@ package org.eclipse.smarthome.core.ephemeris;
 
 import java.net.MalformedURLException;
 
-import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.eclipse.jdt.annotation.Nullable;
-
 /**
  * This service provides functionality around days of the year and is the central
  * service to be used directly by others.
  *
  * @author Gaël L'hopital - Initial contribution and API
  */
-@NonNullByDefault
 public interface EphemerisManager {
 
     /**
@@ -57,7 +53,6 @@ public interface EphemerisManager {
      * @param offset Today +/- offset days (+1 = tomorrow, -1 = yesterday)
      * @return name of the bank holiday or null if no bank holiday
      */
-    @Nullable
     String getBankHolidayName(int offset);
 
     /**
@@ -67,7 +62,5 @@ public interface EphemerisManager {
      * @param offset Today +/- offset days (+1 = tomorrow, -1 = yesterday)
      * @return name of the day or null if no corresponding entry
      */
-    @Nullable
     String getHolidayUserFile(int offset, String filename) throws MalformedURLException;
-
 }
