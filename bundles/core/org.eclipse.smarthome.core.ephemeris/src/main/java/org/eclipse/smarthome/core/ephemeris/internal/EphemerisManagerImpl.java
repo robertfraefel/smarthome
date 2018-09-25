@@ -26,10 +26,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.smarthome.config.core.ConfigOptionProvider;
 import org.eclipse.smarthome.config.core.ConfigurableService;
 import org.eclipse.smarthome.config.core.ParameterOption;
@@ -59,6 +61,7 @@ import de.jollyday.ManagerParameters;
         ConfigurableService.SERVICE_PROPERTY_CATEGORY + "=system",
         ConfigurableService.SERVICE_PROPERTY_LABEL + "=Ephemeris",
         ConfigurableService.SERVICE_PROPERTY_DESCRIPTION_URI + "=" + EphemerisManagerImpl.CONFIG_URI })
+@NonNullByDefault
 public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvider {
     private final Logger logger = LoggerFactory.getLogger(EphemerisManagerImpl.class);
 
@@ -72,11 +75,10 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
 
     private final Map<String, Set<DayOfWeek>> daysets = new HashMap<>();
     private final Map<Object, HolidayManager> holidayManagers = new HashMap<>();
+    private final List<String> countryParameters = new ArrayList<>();
 
     @NonNullByDefault({})
     private String country;
-    private final List<String> countryParameters = new ArrayList<>();
-
     @NonNullByDefault({})
     private LocaleProvider localeProvider;
 
@@ -101,23 +103,20 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
             }
         });
 
-        country = getValueAsString(config, CONFIG_COUNTRY);
-        if (country == null) {
+        if (config.containsKey(CONFIG_COUNTRY)) {
+            country = config.get(CONFIG_COUNTRY).toString();
+        } else {
             country = localeProvider.getLocale().getCountry();
             logger.debug("Using system default country '{}' ", country);
         }
 
         if (config.containsKey(CONFIG_REGION)) {
-            countryParameters.add(getValueAsString(config, CONFIG_REGION));
+            countryParameters.add(config.get(CONFIG_REGION).toString());
         }
 
         if (config.containsKey(CONFIG_CITY)) {
-            countryParameters.add(getValueAsString(config, CONFIG_CITY));
+            countryParameters.add(config.get(CONFIG_CITY).toString());
         }
-    }
-
-    private String getValueAsString(Map<String, Object> config, String key) {
-        return config.containsKey(key) ? config.get(key).toString() : null;
     }
 
     @Reference
@@ -130,23 +129,19 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
     }
 
     @Override
-    public Collection<ParameterOption> getParameterOptions(URI uri, String param, Locale locale) {
+    @Nullable
+    public Collection<ParameterOption> getParameterOptions(URI uri, String param, @Nullable Locale locale) {
+        List<ParameterOption> options = null;
         if (CONFIG_URI.equals(uri.toString())) {
             Locale nullSafeLocale = locale == null ? localeProvider.getLocale() : locale;
-            List<ParameterOption> options = new ArrayList<>();
+            options = new ArrayList<>();
             for (DayOfWeek day : DayOfWeek.values()) {
                 ParameterOption option = new ParameterOption(day.name(),
                         day.getDisplayName(TextStyle.FULL, nullSafeLocale));
                 options.add(option);
             }
-            return options;
         }
-        return null;
-    }
-
-    private boolean isBankHoliday(ZonedDateTime date) {
-        Holiday holiday = getHoliday(date);
-        return holiday != null;
+        return options;
     }
 
     private HolidayManager getHolidayManager(Object managerKey) {
@@ -155,10 +150,22 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
                     ? ManagerParameters.create((String) managerKey)
                     : ManagerParameters.create((URL) managerKey);
 
-            HolidayManager holidayManager = HolidayManager.getInstance(parameters);
-            holidayManagers.put(managerKey, holidayManager);
+            holidayManagers.put(managerKey, HolidayManager.getInstance(parameters));
         }
         return holidayManagers.get(managerKey);
+    }
+
+    private Optional<Holiday> getHoliday(ZonedDateTime date) {
+        HolidayManager manager = getHolidayManager(country);
+        LocalDate localDate = date.toLocalDate();
+
+        Set<Holiday> holidays = manager.getHolidays(localDate, localDate, countryParameters.toArray(new String[0]));
+        return holidays.isEmpty() ? Optional.empty() : Optional.of(holidays.iterator().next());
+    }
+
+    private boolean isBankHoliday(ZonedDateTime date) {
+        Optional<Holiday> holiday = getHoliday(date);
+        return holiday.isPresent();
     }
 
     @Override
@@ -181,44 +188,37 @@ public class EphemerisManagerImpl implements EphemerisManager, ConfigOptionProvi
     }
 
     private boolean isInDayset(String daysetName, ZonedDateTime date) {
-        DayOfWeek dow = date.getDayOfWeek();
-        Set<DayOfWeek> dayset = daysets.get(daysetName);
-        if (dayset != null) {
-            return dayset.contains(dow);
+        if (daysets.containsKey(daysetName)) {
+            DayOfWeek dow = date.getDayOfWeek();
+            return daysets.get(daysetName).contains(dow);
         } else {
             logger.warn("This dayset does is not configured : {}", daysetName);
             return false;
         }
     }
 
+    private String getBankHolidayName(ZonedDateTime date) {
+        Optional<Holiday> holiday = getHoliday(date);
+        return holiday.map(p -> p.getDescription(localeProvider.getLocale())).orElse(null);
+    }
+
     @Override
+    @Nullable
     public String getBankHolidayName(int offset) {
         return getBankHolidayName(ZonedDateTime.now().plusDays(offset));
     }
 
-    private String getBankHolidayName(ZonedDateTime date) {
-        Holiday holiday = getHoliday(date);
-        return (holiday != null) ? holiday.getDescription(localeProvider.getLocale()) : null;
-    }
-
-    private Holiday getHoliday(ZonedDateTime date) {
-        HolidayManager manager = getHolidayManager(country);
-        LocalDate localDate = date.toLocalDate();
-
-        Set<Holiday> holidays = manager.getHolidays(localDate, localDate, countryParameters.toArray(new String[0]));
-
-        return !holidays.isEmpty() ? holidays.iterator().next() : null;
-    }
-
-    private String getHolidayUserFile(ZonedDateTime date, String filename) throws MalformedURLException {
+    private Optional<String> getHolidayUserFile(ZonedDateTime date, String filename) throws MalformedURLException {
         URL url = new URL("file:" + filename);
         Set<Holiday> days = getHolidayManager(url).getHolidays(date.toLocalDate(), date.toLocalDate());
-        return !days.isEmpty() ? days.iterator().next().getPropertiesKey() : null;
+        return days.isEmpty() ? Optional.empty() : Optional.of(days.iterator().next().getPropertiesKey());
     }
 
     @Override
+    @Nullable
     public String getHolidayUserFile(int offset, String filename) throws MalformedURLException {
-        return getHolidayUserFile(ZonedDateTime.now().plusDays(offset), filename);
+        Optional<String> holiday = getHolidayUserFile(ZonedDateTime.now().plusDays(offset), filename);
+        return holiday.isPresent() ? holiday.get() : null;
     }
 
 }

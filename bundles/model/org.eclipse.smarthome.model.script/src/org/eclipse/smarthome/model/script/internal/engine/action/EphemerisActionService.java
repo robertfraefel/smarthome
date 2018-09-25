@@ -15,12 +15,15 @@ package org.eclipse.smarthome.model.script.internal.engine.action;
 import org.eclipse.smarthome.core.ephemeris.EphemerisManager;
 import org.eclipse.smarthome.model.script.actions.Ephemeris;
 import org.eclipse.smarthome.model.script.engine.action.ActionService;
+import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Reference;
 
 /**
  * This class registers an OSGi service for the ephemeris action.
  *
  * @author Gaël L'hopital - Initial contribution and API
  */
+@Component
 public class EphemerisActionService implements ActionService {
 
     public static EphemerisManager ephemerisManager;
@@ -35,6 +38,7 @@ public class EphemerisActionService implements ActionService {
         return Ephemeris.class;
     }
 
+    @Reference
     protected void setEphemerisManager(EphemerisManager ephemerisManager) {
         EphemerisActionService.ephemerisManager = ephemerisManager;
     }
